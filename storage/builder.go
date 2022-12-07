@@ -109,10 +109,10 @@ func (t *TermsExpression) ToMap() map[string]interface{} {
 type FuzzyExpression struct {
 	Basic
 	path  string
-	value []string
+	value string
 }
 
-func NewFuzzy(path string, value []string) *FuzzyExpression {
+func NewFuzzy(path string, value string) *FuzzyExpression {
 	return &FuzzyExpression{
 		path:  path,
 		value: value,
@@ -122,7 +122,33 @@ func NewFuzzy(path string, value []string) *FuzzyExpression {
 func (t *FuzzyExpression) ToMap() map[string]interface{} {
 	return map[string]interface{}{
 		"fuzzy": map[string]interface{}{
-			t.path: t.value,
+			t.path: map[string]interface{}{
+				"value":     t.value,
+				"fuzziness": "auto",
+			},
+		},
+	}
+}
+
+type WildcardExpression struct {
+	Basic
+	path  string
+	value string
+}
+
+func NewWildcard(path string, value string) *WildcardExpression {
+	return &WildcardExpression{
+		path:  path,
+		value: value,
+	}
+}
+
+func (t *WildcardExpression) ToMap() map[string]interface{} {
+	return map[string]interface{}{
+		"wildcard": map[string]interface{}{
+			t.path: map[string]interface{}{
+				"value": t.value,
+			},
 		},
 	}
 }
