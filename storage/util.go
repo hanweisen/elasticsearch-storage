@@ -15,7 +15,10 @@ import (
 	"k8s.io/klog/v2"
 
 	internal "github.com/clusterpedia-io/api/clusterpedia"
-	"github.com/clusterpedia-io/clusterpedia/pkg/storage/internalstorage"
+)
+
+const (
+	ElasticSearchLabelFuzzyName = "elasticsearchstorage.clusterpedia.io/fuzzy-name"
 )
 
 func applyListOptionToQueryBuilder(builder *QueryBuilder, opts *internal.ListOptions) error {
@@ -58,11 +61,13 @@ func applyListOptionToQueryBuilder(builder *QueryBuilder, opts *internal.ListOpt
 		if requirements, selectable := opts.ExtraLabelSelector.Requirements(); selectable {
 			for _, requirement := range requirements {
 				switch requirement.Key() {
-				case internalstorage.SearchLabelFuzzyName:
-					for _, name := range requirement.Values().List() {
-						name = strings.TrimSpace(name)
-						values := []string{name}
-						queryItem := NewFuzzy("name", values)
+				case ElasticSearchLabelFuzzyName:
+					for _, value := range requirement.Values().List() {
+						queryItem := NewFuzzy(NamePath, value)
+						switch requirement.Operator() {
+						case selection.NotEquals, selection.NotIn:
+							queryItem.SetLogicType(MustNot)
+						}
 						builder.addExpression(queryItem)
 					}
 				}
@@ -76,6 +81,7 @@ func applyListOptionToQueryBuilder(builder *QueryBuilder, opts *internal.ListOpt
 				var (
 					fields      []string
 					fieldErrors field.ErrorList
+					wsFlag      bool
 				)
 				for _, f := range requirement.Fields() {
 					if f.IsList() {
@@ -87,19 +93,38 @@ func applyListOptionToQueryBuilder(builder *QueryBuilder, opts *internal.ListOpt
 				if len(fieldErrors) != 0 {
 					return apierrors.NewInvalid(schema.GroupKind{Group: internal.GroupName, Kind: "ListOptions"}, "fieldSelector", fieldErrors)
 				}
-				fields = append(fields, "")
-				copy(fields[1:], fields[0:])
+				if fields[0] == "ws" {
+					wsFlag = true
+				} else {
+					fields = append(fields, "")
+					copy(fields[1:], fields[0:])
+				}
 				fields[0] = "object"
 				path := strings.Join(fields, ".")
 				values := requirement.Values().List()
 				switch requirement.Operator() {
 				case selection.Exists, selection.DoesNotExist, selection.Equals, selection.DoubleEquals:
-					queryItem := NewTerms(path, values)
-					builder.addExpression(queryItem)
+					if wsFlag {
+						for _, value := range values {
+							queryItem := NewWildcard(path, value)
+							builder.addExpression(queryItem)
+						}
+					} else {
+						queryItem := NewTerms(path, values)
+						builder.addExpression(queryItem)
+					}
 				case selection.NotEquals, selection.NotIn:
-					queryItem := NewTerms(path, values)
-					queryItem.SetLogicType(MustNot)
-					builder.addExpression(queryItem)
+					if wsFlag {
+						for _, value := range values {
+							queryItem := NewWildcard(path, value)
+							queryItem.SetLogicType(MustNot)
+							builder.addExpression(queryItem)
+						}
+					} else {
+						queryItem := NewTerms(path, values)
+						queryItem.SetLogicType(MustNot)
+						builder.addExpression(queryItem)
+					}
 				}
 			}
 		}
@@ -182,14 +207,18 @@ func simpleMapExtract(path string, object map[string]interface{}) interface{} {
 
 func sortQuery(path string, desc bool) map[string]interface{} {
 	sort := map[string]interface{}{}
-	if !strings.Contains(path, SpecPath) {
-		switch path {
-		case "created_at":
-			path = strings.Join([]string{CreationTimestampPath, KeywordPath}, ".")
-		default:
-			path = strings.Join([]string{path, KeywordPath}, ".")
-		}
-	} else {
+	switch path {
+	case "cluster":
+		path = ClusterPath
+	case "namespace":
+		path = NameSpacePath
+	case "name":
+		path = NamePath
+	case "created_at":
+		path = CreationTimestampPath
+	case "resource_version":
+		path = ResourceVersionPath
+	default:
 		path = strings.Join([]string{ObjectPath, path}, ".")
 	}
 
